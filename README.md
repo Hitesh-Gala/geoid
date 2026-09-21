@@ -1,0 +1,226 @@
+# Geoid Globe
+
+A ready-made 3-D globe as JSON, plus a drop-in renderer, for plotting satellites
+from your own TLEs. Drag to rotate, scroll or pinch to zoom.
+
+The globe is the **GRACE GGM02C geoid** — the same field NASA renders in
+[SVS #3655](https://svs.gsfc.nasa.gov/3655/), where blue is a mass deficit
+(weaker gravity) and red a mass excess.
+
+## Why this was rebuilt rather than converted
+
+SVS #3655 publishes no 3-D model. Everything on that page is a *rendering* — a
+rotating `.mov`/`.mp4` and two 3840×2160 stills. There is no mesh, no
+equirectangular texture, and nothing convertible to JSON. Scraping frames would
+have given a globe with the lighting and camera baked in.
+
+So the field was resynthesised from its source instead: the published GGM02C
+spherical-harmonic coefficients, evaluated onto a lat/lon grid. The result is
+real data — you can query the geoid height at any point, recolour it, change the
+resolution, or push it to a higher degree — not a picture of data.
+
+Sanity check against the published geoid, which the output reproduces:
+
+| Feature | Published | This model |
+|---|---|---|
+| Indian Ocean low (0° N, 78° E) | ≈ −100 m | −101.8 m |
+| New Guinea high (5° S, 147° E) | ≈ +75 m | +74.1 m |
+| North Atlantic high (58° N, 20° W) | ≈ +60 m | +61.1 m |
+| Global range | −106 … +85 m | −106.01 … +84.20 m |
+
+## Layout
+
+```
+geoid-globe/
+├── index.html               the site itself
+├── dist/geoid-globe.json    the globe model (0.40 MB)  <- ship this
+├── dist/geoid-globe.js      renderer + satellite layer  <- and this
+├── data/                    sample TLEs + coastline GeoJSON
+├── build/synth_geoid.py     spherical-harmonic synthesis, no dependencies
+└── source/GGM02C.gfc        raw coefficients from ICGEM (1.5 MB, input only)
+```
+
+Only the two files in `dist/` are needed to embed the globe elsewhere.
+
+## Quick start
+
+```html
+<script src="https://unpkg.com/three@0.157.0/build/three.min.js"></script>
+<script src="https://unpkg.com/satellite.js@5.0.0/dist/satellite.min.js"></script>
+<script src="geoid-globe.js"></script>
+<script>
+  const globe = GeoidGlobe.create({
+    container: '#globe',
+    modelUrl: 'geoid-globe.json'
+  });
+
+  globe.ready.then(async () => {
+    const tle = await fetch('my-satellites.tle').then(r => r.text());
+    globe.loadTLEText(tle);
+  });
+</script>
+```
+
+That's the whole integration. Satellites propagate in real time via SGP4 and
+ride at their true altitude.
+
+## The JSON model
+
+```jsonc
+{
+  "format": "geoid-globe/1.0",
+  "grid": {
+    "units": "meters",
+    "nLat": 181, "latStart": 90.0,  "latStep": -1.0,
+    "nLon": 361, "lonStart": -180.0, "lonStep": 1.0,
+    "order": "row-major: latitude outer (north to south), longitude inner",
+    "wrapsLongitude": true
+  },
+  "stats":    { "min": -106.01, "max": 84.2, "mean": -0.842, "count": 65341 },
+  "colormap": { "domain": [-106.01, 84.2], "center": 0.0, "stops": [ /* ... */ ] },
+  "earth":    { "meanRadiusKm": 6371.0087714, /* ... */ },
+  "source":   { /* model, degree, credits */ },
+  "undulation": [ [ /* 361 values */ ], /* × 181 rows */ ]
+}
+```
+
+`undulation[j][i]` is the geoid height in metres at
+`lat = 90 − j`, `lon = −180 + i`. Longitude `−180` is repeated at `+180` so the
+mesh closes without a seam.
+
+The colormap is diverging over lopsided data, so `center` marks the value that
+must land on the neutral stop — each half of the ramp is stretched
+independently. A renderer that ignores `center` will paint sea level orange.
+
+## API
+
+### Creating
+
+```js
+GeoidGlobe.create({
+  container: '#globe',        // element or selector
+  modelUrl: 'geoid-globe.json',
+  radius: 100,                // scene units for the Earth's surface
+  relief: 0.035,              // bump height as a fraction of radius
+  coastlinesUrl: null,        // optional GeoJSON, draped on the surface
+  graticule: true,
+  initialLat: 15, initialLon: 20, initialZoom: 3.0,
+  satSize: 0.02,
+  background: 0x05070d,       // or null for a transparent canvas
+  subdivision: 1,             // 2 or 3 to decimate the mesh on weak hardware
+  autoRotate: false,
+  timeScale: 1                // simulated seconds per real second
+})
+```
+
+`globe.ready` is a promise resolving once the model has loaded.
+
+### Satellites
+
+```js
+globe.loadTLEText(text, {
+  limit: 2000,
+  filter: (name, noradId) => true,
+  color: (name, id) => 0x67c8ff        // or a plain hex int
+});                                     // -> number added
+
+globe.addSatellite({ id, name, tle: [line1, line2], color });   // propagated
+globe.addSatellite({ id, name, lat, lon, altKm, color });       // static point
+
+globe.showOrbit(id, { minutes, steps, color });  // default: one full revolution
+globe.hideOrbit(id);
+globe.removeSatellite(id);
+globe.clearSatellites();
+globe.getSatellite(id);      // { id, name, lat, lon, altKm, color, satrec }
+globe.satellites();
+```
+
+Satellite positions are computed against the **undisplaced** sphere, so relief
+exaggeration never distorts an altitude. A satellite at 400 km sits at 400 km
+however lumpy you make the globe.
+
+### Querying the field
+
+```js
+globe.geoidAt(lat, lon);        // metres, bilinear interpolation
+globe.colorAt(lat, lon);        // hex int from the colormap
+globe.toVector(lat, lon, altKm); // THREE.Vector3 in scene space
+globe.surfaceRadius(lat, lon);   // displaced radius, for your own overlays
+```
+
+### View and time
+
+```js
+globe.pointOfView(lat, lon, zoom);   // zoom is a multiple of radius
+globe.setExaggeration(0.09);         // rebuilds mesh + draped overlays
+globe.setAutoRotate(true, 0.06);
+globe.setTime(new Date()); globe.setTimeScale(60);
+globe.play(); globe.pause();
+globe.dispose();
+```
+
+### Events
+
+```js
+globe.on('select', sat => { /* sat is null when clicking empty space */ });
+globe.on('hover',  sat => { /* for tooltips */ });
+globe.on('tick',   date => { /* every frame, with the simulated time */ });
+```
+
+## Controls
+
+Hand-rolled, so there's no OrbitControls dependency and nothing competes for
+touch gestures:
+
+- **one finger / left drag** — rotate
+- **two fingers** — pinch to zoom, drag to rotate
+- **wheel** — zoom, 12% per notch
+
+Zoom is clamped above the tallest bump, so the camera can't end up inside the
+terrain when relief is exaggerated.
+
+## Regenerating the model
+
+```bash
+python build/synth_geoid.py                      # degree 200, 1° grid, ~20 s
+python build/synth_geoid.py --degree 60          # smoother, broad features only
+python build/synth_geoid.py --step 0.5           # 4× the samples, ~1.6 MB
+```
+
+Pure standard library — no numpy. Coefficients are read from
+`source/GGM02C.gfc`; any ICGEM `.gfc` model (EGM96, EIGEN-GL04C, …) drops in
+unchanged.
+
+Note that degree 200 on a 1° grid is already past Nyquist for the grid, so
+`--step 0.5` genuinely resolves more; going beyond degree 200 needs a different
+coefficient file, since that's GGM02C's limit.
+
+## Performance
+
+The default mesh is 65,341 vertices / 129,600 triangles, which is comfortable on
+a phone. `subdivision: 2` quarters that if you're also drawing tens of thousands
+of satellites. Satellites render as a single `THREE.Points` object — one draw
+call regardless of count.
+
+## Running locally
+
+```bash
+python -m http.server 8095 --directory geoid-globe
+```
+
+Then open <http://localhost:8095/>. It loads a 300-object sample catalogue and
+accepts your own `.tle` file through the file picker. Static files only — no
+build step, no bundler, no backend.
+
+## Credits
+
+Gravity model **GGM02C** — Center for Space Research, University of Texas at
+Austin, from GRACE (NASA/DLR). Coefficients distributed by
+[ICGEM, GFZ Potsdam](https://icgem.gfz.de/).
+
+Visual design after **NASA/Goddard Space Flight Center Scientific Visualization
+Studio**, [SVS #3655](https://svs.gsfc.nasa.gov/3655/) — animation by Adam
+Martin, produced by Paul Reddish, science by John C. Ries and Scott Luthcke.
+
+NASA SVS material is generally public domain; credit NASA/GSFC SVS if you reuse
+the look. Check the source page for the specific terms before publishing.
