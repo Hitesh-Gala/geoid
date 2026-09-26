@@ -254,7 +254,11 @@
     };
 
     this.update = function () {
-      if (self.autoRotate && !ids.length) theta += self.autoRotateSpeed * DEG;
+      // Subtract, not add. Earth turns eastward, which means the longitude
+      // facing any fixed direction *decreases* with time -- the sub-solar point
+      // moves from 0 deg to 15 deg W over an hour, not the other way. Adding
+      // here span the globe backwards.
+      if (self.autoRotate && !ids.length) theta -= self.autoRotateSpeed * DEG;
 
       // dTheta/dPhi/dLog hold the move still *owed* to the user. Each frame we
       // pay out a slice and subtract it, so the total travel equals exactly what
@@ -304,6 +308,14 @@
     this.radius = opts.radius || 100;
     this.kmPerUnit = EARTH_R_KM / this.radius;
     this.relief = opts.relief != null ? opts.relief : 0.035;
+    // Visual scaling of orbital altitude. 1 is true; below 1 pulls GEO and HEO
+    // down where they can be seen alongside LEO, above 1 lifts LEO clear of
+    // the surface. Applied to the radial excess above mean radius, so the
+    // surface itself never moves.
+    this.altScale = opts.altitudeScale != null ? opts.altitudeScale : 1;
+    // Max deviation of the red curve from the green, as a fraction of the
+    // orbit's own radius. 0 draws the real path exactly where it is.
+    this.deviationTarget = opts.deviationTarget != null ? opts.deviationTarget : 0.055;
     this._sats = [];
     this._byId = {};
     this._orbits = {};
@@ -729,6 +741,7 @@
       var v = s._ecf
         ? ecfToScene(s._ecf, this._baseRadius / EARTH_R_KM)
         : latLonToVec3(s.lat, s.lon, this._baseRadius * (1 + s.altKm / EARTH_R_KM));
+      this._applyAlt(v);
       pos[n * 3] = v.x; pos[n * 3 + 1] = v.y; pos[n * 3 + 2] = v.z;
       col[n * 3] = ((s.color >> 16) & 255) / 255;
       col[n * 3 + 1] = ((s.color >> 8) & 255) / 255;
@@ -767,8 +780,8 @@
       var pv = satlib.propagate(s.satrec, d);
       if (!pv || !pv.position) continue;
       var gd = satlib.eciToGeodetic(pv.position, satlib.gstime(d));
-      var v = latLonToVec3(gd.latitude / DEG, gd.longitude / DEG,
-                           this._baseRadius * (1 + gd.height / EARTH_R_KM));
+      var v = this._applyAlt(latLonToVec3(gd.latitude / DEG, gd.longitude / DEG,
+                           this._baseRadius * (1 + gd.height / EARTH_R_KM)));
       pts.push(v.x, v.y, v.z);
     }
     var g = new THREE.BufferGeometry();
@@ -897,8 +910,22 @@
         foot.push(new THREE.Vector3(bx, by, bz));
         if (best > maxDevScene) maxDevScene = best;
       }
-      maxDevScene = Math.sqrt(maxDevScene);
-      maxDevKm = maxDevScene / K;
+      maxDevKm = Math.sqrt(maxDevScene) / K;   // reported in true kilometres
+    }
+
+    // Everything from here is display geometry. Altitude scaling is applied to
+    // the curves and to the feet together, so the deviation the eye sees stays
+    // proportional to the orbit as drawn -- while maxDevKm above keeps the
+    // honest, unscaled figure for the readout.
+    var self2 = this;
+    function scaleAll(arr) { if (arr) for (var i = 0; i < arr.length; i++) self2._applyAlt(arr[i]); }
+    scaleAll(actual); scaleAll(ideal); scaleAll(foot);
+    maxDevScene = 0;
+    if (foot) {
+      for (var fm = 0; fm < actual.length; fm++) {
+        var dd = actual[fm].distanceTo(foot[fm]);
+        if (dd > maxDevScene) maxDevScene = dd;
+      }
     }
 
     // Everything below is sized against the orbit itself, not the globe. Tube
@@ -920,10 +947,12 @@
     // so nobody mistakes the amplified curve for the real one.
     var devScale = 1, exaggerated = null;
     if (ideal && maxDevScene > 1e-9) {
-      var target = scaleRef * (options.deviationTarget != null
-        ? options.deviationTarget : 0.055);
-      devScale = Math.max(1, Math.min(options.maxDeviationScale || 4000, target / maxDevScene));
-      if (devScale > 1.5) {
+      var dt = options.deviationTarget != null ? options.deviationTarget : this.deviationTarget;
+      var target = scaleRef * dt;
+      devScale = Math.max(1, Math.min(options.maxDeviationScale || 20000, target / maxDevScene));
+      // At a target of 0 the user has asked for the truth, so leave the red
+      // curve exactly where the satellite actually flies.
+      if (dt > 0 && devScale > 1.5) {
         exaggerated = [];
         for (var z = 0; z < actual.length; z++) {
           exaggerated.push(foot[z].clone().add(
@@ -1052,6 +1081,25 @@
   };
 
   Globe.prototype.isPaused = function () { return !this.playing; };
+
+  Globe.prototype.setAltitudeScale = function (k) { this.altScale = k; return this; };
+  Globe.prototype.setDeviationTarget = function (f) { this.deviationTarget = f; return this; };
+
+  /**
+   * Scale a scene-space point's altitude above mean radius, in place.
+   * Only the excess is scaled, so the globe's surface stays put and a point
+   * on it stays on it.
+   */
+  Globe.prototype._applyAlt = function (v) {
+    var k = this.altScale;
+    if (k === 1) return v;
+    var R = this._baseRadius;
+    var r = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (!(r > 0)) return v;
+    var f = (R * (1 + k * (r / R - 1))) / r;
+    v.x *= f; v.y *= f; v.z *= f;
+    return v;
+  };
 
   Globe.prototype.setAutoRotate = function (on, speed) {
     this.controls.autoRotate = !!on;
