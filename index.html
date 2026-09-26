@@ -60,8 +60,9 @@
   #hud .swatch { display: inline-block; width: 15px; height: 0;
                  border-top: 2px solid currentColor; vertical-align: middle;
                  margin-right: 5px; }
-  #hud .dashed { border-top-style: dashed; color: #fff; opacity: .75; }
-  #hud .amber { color: #ffbe4d; }
+  #hud .green { color: #35e06a; border-top-width: 3px; }
+  #hud .red { color: #ff5a50; }
+  #hud .faded { color: #ff5a50; opacity: .55; }
 
   #legend { top: 14px; right: 14px; width: 172px; }
   #legend .bar { height: 12px; border-radius: 3px; margin: 8px 0 5px;
@@ -319,15 +320,15 @@
       if (orbit) {
         var u = orbit.userData;
         html += '<div class="dev">' +
-          '<div><span class="swatch"></span><span class="k">actual path · </span>' +
+          '<div><span class="swatch red"></span><span class="k">real path · </span>' +
             u.periodMin.toFixed(1) + ' min</div>';
         if (u.hasIdeal) {
-          html += '<div><span class="swatch dashed"></span><span class="k">ideal ellipse · e=</span>' +
+          html += '<div><span class="swatch green"></span><span class="k">ideal ellipse · e=</span>' +
               u.eccentricity.toFixed(4) + '</div>' +
             '<div><span class="k">Perigee/apogee </span>' + u.perigeeKm.toFixed(0) +
               ' / ' + u.apogeeKm.toFixed(0) + ' km</div>';
           if (u.deviationScale > 1) {
-            html += '<div><span class="swatch amber"></span><span class="k">distorted shape · ×</span>' +
+            html += '<div><span class="swatch faded"></span><span class="k">distortion shown · ×</span>' +
               Math.round(u.deviationScale) + '</div>';
           }
           html += '<div><span class="warn">Gravity offset ' + u.maxDeviationKm.toFixed(1) +

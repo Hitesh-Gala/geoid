@@ -81,6 +81,37 @@
     };
   }
 
+  /**
+   * A polyline with real, controllable thickness.
+   *
+   * THREE.LineBasicMaterial.linewidth is silently ignored on every WebGL
+   * platform that matters (ANGLE on Windows clamps it to 1px), so a Line
+   * cannot be made thicker. A swept tube can, at the cost of a little
+   * geometry -- a few thousand vertices per orbit, which is nothing.
+   *
+   * `centripetal` parameterisation is deliberate: with points spaced unevenly
+   * along an eccentric orbit, the plain catmullrom variant overshoots into
+   * cusps near perigee.
+   */
+  function tubeFromPoints(THREE, points, opts) {
+    var pts = points;
+    if (opts.closed && pts.length > 1) {
+      var a = pts[0], b = pts[pts.length - 1];
+      if (a.distanceToSquared(b) < 1e-12) pts = pts.slice(0, -1);  // drop the seam
+    }
+    var curve = new THREE.CatmullRomCurve3(pts, !!opts.closed, 'centripetal', 0.5);
+    var geom = new THREE.TubeGeometry(curve, pts.length, opts.radius, 8, !!opts.closed);
+    var mat = new THREE.MeshBasicMaterial({
+      color: opts.color,
+      transparent: opts.opacity != null && opts.opacity < 1,
+      opacity: opts.opacity != null ? opts.opacity : 1,
+      depthWrite: opts.opacity == null || opts.opacity >= 1
+    });
+    var mesh = new THREE.Mesh(geom, mat);
+    mesh.renderOrder = opts.renderOrder || 0;
+    return mesh;
+  }
+
   /** A soft round sprite, so satellite dots aren't squares. */
   function dotTexture(THREE) {
     var c = document.createElement('canvas');
@@ -852,37 +883,34 @@
     var group = new THREE.Group();
     group.name = 'orbit:' + s.id;
 
+    // Green for the ideal, red for the real path, and the ideal drawn thicker
+    // so the thin red curve reads clearly on top of it where the two coincide.
+    var idealR = (options.idealWidth != null ? options.idealWidth : 0.009) * this.radius;
+    var realR = (options.realWidth != null ? options.realWidth : 0.005) * this.radius;
+
     if (ideal) {
-      var li = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints(ideal),
-        new THREE.LineDashedMaterial({
-          color: options.idealColor != null ? options.idealColor : 0xffffff,
-          transparent: true, opacity: options.idealOpacity != null ? options.idealOpacity : 0.4,
-          depthWrite: false,
-          dashSize: this.radius * 0.028, gapSize: this.radius * 0.02
-        }));
-      li.computeLineDistances();   // dashes need this or the line renders solid
+      var li = tubeFromPoints(THREE, ideal, {
+        closed: true, radius: idealR, renderOrder: 1,
+        color: options.idealColor != null ? options.idealColor : 0x35e06a
+      });
       li.name = 'orbit-ideal';
       group.add(li);
     }
 
-    var la = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(actual),
-      new THREE.LineBasicMaterial({
-        color: options.color != null ? options.color : s.color,
-        transparent: true, opacity: options.opacity != null ? options.opacity : 0.95,
-        depthWrite: false
-      }));
+    var la = tubeFromPoints(THREE, actual, {
+      closed: false, radius: realR, renderOrder: 2,
+      color: options.color != null ? options.color : 0xff3b30
+    });
     la.name = 'orbit-actual';
     group.add(la);
 
     if (exaggerated) {
-      var le = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints(exaggerated),
-        new THREE.LineBasicMaterial({
-          color: options.deviationColor != null ? options.deviationColor : 0xffbe4d,
-          transparent: true, opacity: 0.9, depthWrite: false
-        }));
+      // Same physical curve as `actual`, just amplified, so it keeps the red --
+      // held translucent to signal that this one is the magnified view.
+      var le = tubeFromPoints(THREE, exaggerated, {
+        closed: false, radius: realR, renderOrder: 3, opacity: 0.55,
+        color: options.deviationColor != null ? options.deviationColor : 0xff3b30
+      });
       le.name = 'orbit-deviation';
       group.add(le);
     }

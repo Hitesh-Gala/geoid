@@ -148,11 +148,18 @@ make the globe.
 than as a ground track, by holding Earth's orientation fixed at the current
 instant. It returns a `THREE.Group` of up to three curves:
 
-| Curve | What it is |
-|---|---|
-| `orbit-actual` (solid) | where SGP4 really flies over one revolution |
-| `orbit-ideal` (dashed) | the two-body Kepler ellipse through the same position and velocity — the orbit a perfectly spherical Earth would give |
-| `orbit-deviation` (amber) | the actual path with its departure from the ideal ellipse magnified, so the distortion is visible at all |
+| Curve | Colour | What it is |
+|---|---|---|
+| `orbit-ideal` | green, thicker | the two-body Kepler ellipse through the same position and velocity — the orbit a perfectly spherical Earth would give |
+| `orbit-actual` | red, thinner | where SGP4 really flies over one revolution |
+| `orbit-deviation` | red, translucent | the same real path with its departure from the ideal magnified, so the distortion is visible at all |
+
+Colours and widths are overridable per call via `idealColor`, `color`,
+`deviationColor`, `idealWidth` and `realWidth` (widths as a fraction of globe
+radius). All three are drawn as **swept tubes, not lines**: WebGL ignores
+`LineBasicMaterial.linewidth` on essentially every platform, so a `Line` can
+never be made thicker. A tube costs a few thousand triangles and actually
+honours the width.
 
 `group.userData` carries `periodMin`, `semiMajorKm`, `eccentricity`,
 `perigeeKm`, `apogeeKm`, `maxDeviationKm` and `deviationScale`.
