@@ -153,13 +153,19 @@
 
 <script src="https://unpkg.com/three@0.157.0/build/three.min.js"></script>
 <script src="https://unpkg.com/satellite.js@5.0.0/dist/satellite.min.js"></script>
-<script src="dist/geoid-globe.js"></script>
+<script src="dist/geoid-globe.js?v=2"></script>
 <script>
 (function () {
+  // GitHub Pages serves these with Cache-Control: max-age=600, so without a
+  // cache-buster a returning visitor runs up to ten minutes of stale code
+  // after a deploy. Bump V (and the ?v= on the script tag above) whenever
+  // geoid-globe.js or anything under dist/ and data/ changes.
+  var V = '?v=2';
+
   var globe = GeoidGlobe.create({
     container: '#globe',
-    modelUrl: 'dist/geoid-globe.json',
-    coastlinesUrl: 'data/countries-110m.geojson',
+    modelUrl: 'dist/geoid-globe.json' + V,
+    coastlinesUrl: 'data/countries-110m.geojson' + V,
     radius: 100,
     relief: 0.035,
     initialLat: 15, initialLon: 20, initialZoom: 3.0,
@@ -197,7 +203,7 @@
   }
 
   function loadSample() {
-    fetch('data/sample.tle').then(function (r) { return r.text(); }).then(function (t) {
+    fetch('data/sample.tle' + V).then(function (r) { return r.text(); }).then(function (t) {
       globe.clearSatellites();
       afterLoad(globe.loadTLEText(t));
     });

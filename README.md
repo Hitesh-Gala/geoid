@@ -274,6 +274,17 @@ Then open <http://localhost:8095/>. It loads a 300-object sample catalogue and
 accepts your own `.tle` file through the file picker. Static files only — no
 build step, no bundler, no backend.
 
+## Deploying
+
+Push to `main`; GitHub Pages rebuilds in under a minute.
+
+**Bump the `?v=N` cache-buster in `index.html` whenever you change
+`dist/geoid-globe.js` or anything under `dist/` and `data/`.** Pages serves
+those with `Cache-Control: max-age=600`, so without it a returning visitor runs
+up to ten minutes of stale code after a deploy — and silently, since the page
+still loads, just with the old behaviour. There are two places to change: the
+`<script src="dist/geoid-globe.js?v=N">` tag and the `var V = '?v=N'` beside it.
+
 ## Credits
 
 Gravity model **GGM02C** — Center for Space Research, University of Texas at
