@@ -141,12 +141,27 @@
     this.maxDistance = opts.maxDistance;
     this.rotateSpeed = 0.45;
     this.zoomSpeed = 1.0;
-    this.easing = 0.18;   // fraction of the outstanding move applied per frame
+    this.easing = 0.18;        // fraction of the outstanding move paid out per frame
+    // Zoom glides longer than rotation does: a slower settle reads as smooth
+    // here, whereas the same lag on rotation would just feel unresponsive.
+    this.zoomEasing = opts.zoomEasing != null ? opts.zoomEasing : 0.1;
+    // How much of a pinch translates into zoom. Deliberately below 1: a 1:1
+    // "globe sticks to your fingers" mapping sounds right, but the usable
+    // distance range is only about 11x end to end, so one ordinary pinch would
+    // consume nearly all of it and leave no fine control.
+    this.pinchGain = opts.pinchGain != null ? opts.pinchGain : 0.5;
+    this.wheelStep = opts.wheelStep != null ? opts.wheelStep : 0.1;
     this.autoRotate = !!opts.autoRotate;
     this.autoRotateSpeed = opts.autoRotateSpeed || 0.06; // deg per frame
 
-    var theta = opts.theta, phi = opts.phi, dist = opts.distance;
-    var dTheta = 0, dPhi = 0, dDist = 0;
+    // Distance is tracked logarithmically. Zoom is inherently multiplicative --
+    // "twice as close" means the same thing from anywhere -- so working in log
+    // space makes a given gesture change distance by a constant *percentage*
+    // instead of a constant number of units. Linear tracking is what made this
+    // lurch: the same input moved you 12 units near the surface and 120 far out.
+    var theta = opts.theta, phi = opts.phi;
+    var logDist = Math.log(opts.distance);
+    var dTheta = 0, dPhi = 0, dLog = 0;
     var pointers = {}, ids = [];
     var lastMid = null, lastSpread = 0;
     var EPS = 0.0001;
@@ -184,8 +199,11 @@
       } else if (ids.length >= 2) {
         self._dragged = true;
         var m = mid(), s = spread();
-        // Pinch: the ratio of finger spread maps straight onto camera distance.
-        if (lastSpread > 0 && s > 0) dDist += dist * (1 - s / lastSpread) * self.zoomSpeed;
+        // Pinch: the log of the spread ratio, so spreading your fingers by the
+        // same proportion always zooms by the same proportion.
+        if (lastSpread > 0 && s > 0) {
+          dLog -= Math.log(s / lastSpread) * self.pinchGain * self.zoomSpeed;
+        }
         // Two-finger drag still rotates, so the gesture never feels stuck.
         dTheta -= (m.x - lastMid.x) * self.rotateSpeed * 0.01;
         dPhi -= (m.y - lastMid.y) * self.rotateSpeed * 0.01;
@@ -203,7 +221,14 @@
     function wheel(e) {
       if (!self.enabled) return;
       e.preventDefault();
-      dDist += dist * (e.deltaY > 0 ? 0.12 : -0.12) * self.zoomSpeed;
+      // Normalise across input devices: a mouse notch arrives as ~120 pixels,
+      // a trackpad as a stream of small deltas, and some browsers report lines
+      // or pages instead. Without this a trackpad either crawls or bolts.
+      var d = e.deltaY;
+      if (e.deltaMode === 1) d *= 16;           // lines
+      else if (e.deltaMode === 2) d *= 100;     // pages
+      if (d > 160) d = 160; else if (d < -160) d = -160;
+      dLog += (d / 120) * self.wheelStep * self.zoomSpeed;
     }
 
     dom.style.touchAction = 'none';
@@ -222,31 +247,38 @@
     };
 
     this.dragging = function () { return ids.length > 0; };
-    this.distance = function () { return dist; };
+    this.distance = function () { return Math.exp(logDist); };
     this.setPointOfView = function (lat, lon, d) {
       if (lat != null) phi = (90 - lat) * DEG;
       if (lon != null) theta = lon * DEG;
-      if (d != null) dist = d;
+      if (d != null) { logDist = Math.log(d); dLog = 0; }
     };
 
     this.update = function () {
       if (self.autoRotate && !ids.length) theta += self.autoRotateSpeed * DEG;
 
-      // dTheta/dPhi/dDist hold the move still *owed* to the user. Each frame we
+      // dTheta/dPhi/dLog hold the move still *owed* to the user. Each frame we
       // pay out a slice and subtract it, so the total travel equals exactly what
       // the gesture asked for -- accumulating it instead would multiply every
       // input by 1/easing and send one wheel notch straight to the zoom stop.
-      var e = self.easing;
-      var st = dTheta * e, sp2 = dPhi * e, sd = dDist * e;
-      theta += st; phi += sp2; dist += sd;
-      dTheta -= st; dPhi -= sp2; dDist -= sd;
+      var e = self.easing, ez = self.zoomEasing;
+      var st = dTheta * e, sp2 = dPhi * e, sl = dLog * ez;
+      theta += st; phi += sp2; logDist += sl;
+      dTheta -= st; dPhi -= sp2; dLog -= sl;
       if (Math.abs(dTheta) < 1e-6) dTheta = 0;
       if (Math.abs(dPhi) < 1e-6) dPhi = 0;
-      if (Math.abs(dDist) < 1e-5) dDist = 0;
+      if (Math.abs(dLog) < 1e-6) dLog = 0;
 
       phi = Math.max(EPS, Math.min(Math.PI - EPS, phi));
-      dist = Math.max(self.minDistance, Math.min(self.maxDistance, dist));
 
+      // Drop the outstanding zoom on contact with a limit. Keeping it would let
+      // an over-enthusiastic pinch sit pinned against the stop, refusing to
+      // reverse until the leftover had decayed away.
+      var loMin = Math.log(self.minDistance), loMax = Math.log(self.maxDistance);
+      if (logDist < loMin) { logDist = loMin; dLog = 0; }
+      else if (logDist > loMax) { logDist = loMax; dLog = 0; }
+
+      var dist = Math.exp(logDist);
       var sp = Math.sin(phi);
       camera.position.set(
         dist * sp * Math.cos(theta),
@@ -256,7 +288,9 @@
       camera.lookAt(0, 0, 0);
     };
 
-    this.spherical = function () { return { theta: theta, phi: phi, distance: dist }; };
+    this.spherical = function () {
+      return { theta: theta, phi: phi, distance: Math.exp(logDist) };
+    };
   }
 
   // ------------------------------------------------------------------ globe
@@ -313,7 +347,10 @@
       minDistance: this.radius * (1 + this.relief) * 1.06,
       maxDistance: this.radius * 12,
       autoRotate: !!opts.autoRotate,
-      autoRotateSpeed: opts.autoRotateSpeed
+      autoRotateSpeed: opts.autoRotateSpeed,
+      pinchGain: opts.pinchGain,
+      wheelStep: opts.wheelStep,
+      zoomEasing: opts.zoomEasing
     });
 
     this._raycaster = new THREE.Raycaster();

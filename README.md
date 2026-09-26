@@ -218,7 +218,25 @@ touch gestures:
 
 - **one finger / left drag** — rotate
 - **two fingers** — pinch to zoom, drag to rotate
-- **wheel** — zoom, 12% per notch
+- **wheel** — zoom, ~9.5% per notch, normalised across mice and trackpads
+
+Zoom is tracked in **log distance**, not linear distance. Zoom is inherently
+multiplicative — "twice as close" means the same thing from anywhere — so a
+gesture changes distance by a constant *percentage* rather than a constant
+number of units. Linear tracking makes the same input move you a little near
+the surface and a lot far out, which is what reads as lurching. It also makes
+the gesture exactly reversible: pinch out and back and you land on the distance
+you started from, to the digit.
+
+`pinchGain` (default 0.5) sets how much of a pinch becomes zoom. It is
+deliberately below 1: a 1:1 "globe sticks to your fingers" mapping sounds
+right, but the usable distance range is only about 11× end to end, so one
+ordinary pinch would consume nearly all of it. At 0.5 a 3× finger spread zooms
+√3 ≈ 1.73×, leaving room to work.
+
+Tunable at creation: `pinchGain`, `wheelStep` (default 0.1), `zoomEasing`
+(default 0.1 — slower than the 0.18 used for rotation, because a longer settle
+reads as smooth on zoom but as unresponsive on rotation).
 
 Zoom is clamped above the tallest bump, so the camera can't end up inside the
 terrain when relief is exaggerated.
