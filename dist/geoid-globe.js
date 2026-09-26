@@ -42,6 +42,15 @@
   }
 
   /**
+   * Earth-fixed kilometres -> scene units. ECEF is Z-up with X through
+   * (0° N, 0° E); the scene is Y-up, so the axes rotate and Y flips sign.
+   * `k` is scene units per kilometre.
+   */
+  function ecfToScene(f, k) {
+    return { x: f.x * k, y: f.z * k, z: -f.y * k };
+  }
+
+  /**
    * Sample a colormap definition ({domain, stops, center?}) -> [r,g,b] 0..1.
    * With `center`, the ramp is split piecewise so that value lands exactly on
    * the middle stop -- what a diverging scale over lopsided data needs.
@@ -641,9 +650,15 @@
         while (s.lon < -180) s.lon += 360;
         s.altKm = gd.height;
         if (!isFinite(s.altKm) || s.altKm < -100) continue;
+        // Keep the true Earth-fixed vector for placement. Geodetic height is
+        // measured from the ellipsoid, so re-adding it to a sphere of mean
+        // radius would misplace the dot by up to ~20 km -- enough to visibly
+        // lift it off the orbit curves drawn by showOrbitEllipse().
+        s._ecf = satlib.eciToEcf(pv.position, gmst);
       }
-      var r = this._baseRadius * (1 + s.altKm / EARTH_R_KM);
-      var v = latLonToVec3(s.lat, s.lon, r);
+      var v = s._ecf
+        ? ecfToScene(s._ecf, this._baseRadius / EARTH_R_KM)
+        : latLonToVec3(s.lat, s.lon, this._baseRadius * (1 + s.altKm / EARTH_R_KM));
       pos[n * 3] = v.x; pos[n * 3 + 1] = v.y; pos[n * 3 + 2] = v.z;
       col[n * 3] = ((s.color >> 16) & 255) / 255;
       col[n * 3 + 1] = ((s.color >> 8) & 255) / 255;
@@ -699,13 +714,210 @@
     return line;
   };
 
+  /**
+   * Draw the orbit as it actually is in space -- a closed loop around the globe
+   * rather than the wavy ground track showOrbit() gives. Two curves come out:
+   *
+   *   solid   the path SGP4 really flies over one revolution. SGP4 carries
+   *           Earth's zonal gravity terms -- J2 above all, the oblateness that
+   *           is also the single largest feature of the geoid -- so this path
+   *           precesses and does not quite close on itself.
+   *   dashed  the two-body Kepler ellipse through the same instantaneous
+   *           position and velocity: the orbit a perfectly spherical Earth
+   *           would produce.
+   *
+   * The gap between them *is* the gravity field bending the orbit. One honest
+   * caveat, worth repeating in any UI built on this: that gap reflects the
+   * low-order zonal field SGP4 models, not the full GGM02C field the globe is
+   * coloured with. A TLE simply does not carry enough information to reproduce
+   * the fine geoid structure, so this shows the dominant distortion, not all
+   * of it.
+   *
+   * Both curves are built at one frozen Earth orientation, so they keep their
+   * true inertial shape instead of smearing into a ground track.
+   */
+  Globe.prototype.showOrbitEllipse = function (id, options) {
+    options = options || {};
+    var s = this._byId[String(id)];
+    if (!s || !s.satrec) return null;
+    var satlib = this.opts.satelliteJs || window.satellite;
+    if (!satlib) return null;
+    var THREE = this.THREE;
+    this.hideOrbit(id);
+
+    var MU = 398600.4418;                      // km^3/s^2, Earth's GM
+    var K = this._baseRadius / EARTH_R_KM;     // scene units per km
+    var date0 = new Date(this.time.getTime());
+    var gmst0 = satlib.gstime(date0);
+    function toScene(p) {
+      var v = ecfToScene(satlib.eciToEcf(p, gmst0), K);
+      return new THREE.Vector3(v.x, v.y, v.z);
+    }
+
+    var periodMin = options.minutes || (2 * Math.PI / s.satrec.no);
+    var steps = options.steps || 360;
+
+    // --- the real, perturbed path
+    var actual = [], state0 = null;
+    for (var i = 0; i <= steps; i++) {
+      var pv = satlib.propagate(
+        s.satrec, new Date(date0.getTime() + (i / steps) * periodMin * 60000));
+      if (!pv || !pv.position || !pv.velocity) continue;
+      if (!state0) state0 = pv;
+      actual.push(toScene(pv.position));
+    }
+    if (!state0 || actual.length < 8) return null;
+
+    // --- osculating Kepler ellipse from the state vector at this instant
+    var rv = new THREE.Vector3(state0.position.x, state0.position.y, state0.position.z);
+    var vv = new THREE.Vector3(state0.velocity.x, state0.velocity.y, state0.velocity.z);
+    var rm = rv.length();
+    var hv = new THREE.Vector3().crossVectors(rv, vv);
+    var ev = new THREE.Vector3().crossVectors(vv, hv).divideScalar(MU)
+                                .sub(rv.clone().divideScalar(rm));
+    var ecc = ev.length();
+    var a = 1 / (2 / rm - vv.lengthSq() / MU);
+
+    var ideal = null, apogeeKm = null, perigeeKm = null;
+    if (isFinite(a) && a > 0 && ecc < 1) {
+      var wHat = hv.clone().normalize();
+      // At e ~ 0 the periapsis direction is undefined, so any in-plane axis
+      // serves -- the ellipse is a circle and has no distinguished point.
+      var pHat = ecc > 1e-7
+        ? ev.clone().normalize()
+        : rv.clone().sub(wHat.clone().multiplyScalar(rv.dot(wHat))).normalize();
+      var qHat = new THREE.Vector3().crossVectors(wHat, pHat);
+      var semiLatus = a * (1 - ecc * ecc);
+      var nIdeal = options.idealSteps || 480;
+      ideal = [];
+      for (var j = 0; j <= nIdeal; j++) {
+        var nu = (j / nIdeal) * Math.PI * 2;
+        var rr = semiLatus / (1 + ecc * Math.cos(nu));
+        var e3 = pHat.clone().multiplyScalar(rr * Math.cos(nu))
+                     .add(qHat.clone().multiplyScalar(rr * Math.sin(nu)));
+        ideal.push(toScene({ x: e3.x, y: e3.y, z: e3.z }));
+      }
+      apogeeKm = a * (1 + ecc) - EARTH_R_KM;
+      perigeeKm = a * (1 - ecc) - EARTH_R_KM;
+    }
+
+    // --- how far the real path strays from the ideal ellipse, in km
+    //
+    // Distance to the nearest *segment*, not the nearest vertex. Measuring to
+    // vertices would report half the sample spacing as "deviation" even for a
+    // perfect ellipse -- on a GEO orbit that alone is ~276 km of pure
+    // discretisation noise, which would swamp the real effect.
+    var maxDevKm = 0, foot = null, maxDevScene = 0;
+    if (ideal) {
+      foot = [];
+      for (var m = 0; m < actual.length; m++) {
+        var p = actual[m], best = Infinity, bx = 0, by = 0, bz = 0;
+        for (var q = 0; q < ideal.length - 1; q++) {
+          var A = ideal[q], B = ideal[q + 1];
+          var abx = B.x - A.x, aby = B.y - A.y, abz = B.z - A.z;
+          var apx = p.x - A.x, apy = p.y - A.y, apz = p.z - A.z;
+          var ab2 = abx * abx + aby * aby + abz * abz;
+          var t = ab2 > 0 ? (apx * abx + apy * aby + apz * abz) / ab2 : 0;
+          if (t < 0) t = 0; else if (t > 1) t = 1;
+          var fx = A.x + abx * t, fy = A.y + aby * t, fz = A.z + abz * t;
+          var dx = p.x - fx, dy = p.y - fy, dz = p.z - fz;
+          var d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 < best) { best = d2; bx = fx; by = fy; bz = fz; }
+        }
+        foot.push(new THREE.Vector3(bx, by, bz));
+        if (best > maxDevScene) maxDevScene = best;
+      }
+      maxDevScene = Math.sqrt(maxDevScene);
+      maxDevKm = maxDevScene / K;
+    }
+
+    // The real distortion is a fraction of a percent of the orbit radius, so at
+    // true scale the two curves land on top of each other and you see nothing.
+    // Magnify the departure from the ideal ellipse until it's actually legible,
+    // the same bargain the globe's relief already makes -- and report the factor
+    // so nobody mistakes the amplified curve for the real one.
+    var devScale = 1, exaggerated = null;
+    if (ideal && maxDevScene > 1e-9) {
+      var target = this.radius * (options.deviationTarget || 0.035);
+      devScale = Math.max(1, Math.min(options.maxDeviationScale || 4000, target / maxDevScene));
+      if (devScale > 1.5) {
+        exaggerated = [];
+        for (var z = 0; z < actual.length; z++) {
+          exaggerated.push(foot[z].clone().add(
+            actual[z].clone().sub(foot[z]).multiplyScalar(devScale)));
+        }
+      }
+    }
+
+    var group = new THREE.Group();
+    group.name = 'orbit:' + s.id;
+
+    if (ideal) {
+      var li = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(ideal),
+        new THREE.LineDashedMaterial({
+          color: options.idealColor != null ? options.idealColor : 0xffffff,
+          transparent: true, opacity: options.idealOpacity != null ? options.idealOpacity : 0.4,
+          depthWrite: false,
+          dashSize: this.radius * 0.028, gapSize: this.radius * 0.02
+        }));
+      li.computeLineDistances();   // dashes need this or the line renders solid
+      li.name = 'orbit-ideal';
+      group.add(li);
+    }
+
+    var la = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(actual),
+      new THREE.LineBasicMaterial({
+        color: options.color != null ? options.color : s.color,
+        transparent: true, opacity: options.opacity != null ? options.opacity : 0.95,
+        depthWrite: false
+      }));
+    la.name = 'orbit-actual';
+    group.add(la);
+
+    if (exaggerated) {
+      var le = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(exaggerated),
+        new THREE.LineBasicMaterial({
+          color: options.deviationColor != null ? options.deviationColor : 0xffbe4d,
+          transparent: true, opacity: 0.9, depthWrite: false
+        }));
+      le.name = 'orbit-deviation';
+      group.add(le);
+    }
+
+    group.userData = {
+      periodMin: periodMin,
+      semiMajorKm: a,
+      eccentricity: ecc,
+      apogeeKm: apogeeKm,
+      perigeeKm: perigeeKm,
+      maxDeviationKm: maxDevKm,
+      deviationScale: exaggerated ? devScale : 1,
+      hasIdeal: !!ideal
+    };
+    this.scene.add(group);
+    this._orbits[String(id)] = group;
+    return group;
+  };
+
   Globe.prototype.hideOrbit = function (id) {
-    var line = this._orbits[String(id)];
-    if (!line) return false;
-    this.scene.remove(line);
-    line.geometry.dispose(); line.material.dispose();
+    var obj = this._orbits[String(id)];
+    if (!obj) return false;
+    this.scene.remove(obj);
+    obj.traverse(function (o) {          // handles both a bare Line and a Group
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) [].concat(o.material).forEach(function (m) { m.dispose(); });
+    });
     delete this._orbits[String(id)];
     return true;
+  };
+
+  Globe.prototype.hideAllOrbits = function () {
+    var self = this;
+    Object.keys(this._orbits).forEach(function (k) { self.hideOrbit(k); });
+    return this;
   };
 
   // --------------------------------------------------------- time & picking
@@ -743,6 +955,21 @@
     }
     return this;
   };
+  /**
+   * Satellite dot size, as a fraction of the globe radius. The ray-pick radius
+   * grows with it, so turning the dots up genuinely makes them easier to hit
+   * rather than just easier to see.
+   */
+  Globe.prototype.setSatelliteSize = function (frac) {
+    this.opts.satSize = frac;
+    if (this._satPoints) this._satPoints.material.size = frac * this.radius;
+    this._raycaster.params.Points.threshold =
+      Math.max(this.radius * 0.01, frac * this.radius * 0.8);
+    return this;
+  };
+
+  Globe.prototype.isPaused = function () { return !this.playing; };
+
   Globe.prototype.setAutoRotate = function (on, speed) {
     this.controls.autoRotate = !!on;
     if (speed != null) this.controls.autoRotateSpeed = speed;

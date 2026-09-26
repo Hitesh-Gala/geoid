@@ -47,6 +47,22 @@
   input[type=file] { display: none; }
   .val { color: var(--accent); }
 
+  /* The pause control earns full width -- it's the one people reach for. */
+  button.primary {
+    width: 100%; padding: 9px; font-size: 12px; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase;
+    border-color: var(--accent); background: rgba(103,200,255,.16);
+  }
+  button.primary.paused { border-color: #ffbe4d; color: #ffd591;
+                          background: rgba(255,190,77,.18); }
+  #hud .warn { color: #ffbe4d; }
+  #hud .dev { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line); }
+  #hud .swatch { display: inline-block; width: 15px; height: 0;
+                 border-top: 2px solid currentColor; vertical-align: middle;
+                 margin-right: 5px; }
+  #hud .dashed { border-top-style: dashed; color: #fff; opacity: .75; }
+  #hud .amber { color: #ffbe4d; }
+
   #legend { top: 14px; right: 14px; width: 172px; }
   #legend .bar { height: 12px; border-radius: 3px; margin: 8px 0 5px;
     background: linear-gradient(to right,
@@ -70,7 +86,12 @@
     #head p { display: none; }
     #legend { width: 130px; padding: 9px 10px; }
     #ctl { width: calc(100vw - 28px); max-height: 38vh; }
-    #hud { display: none; }
+    /* The readout carries the orbit details now, so it can't just vanish on a
+       phone -- it sits above the panel, and only when there's something in it. */
+    #hud { display: none; left: 14px; right: 14px; width: auto;
+           top: auto; bottom: calc(40vh + 18px); }
+    #hud.show { display: block; }
+    #hud .utcline { display: none; }
   }
 </style>
 </head>
@@ -93,11 +114,16 @@
 </div>
 
 <div class="panel" id="ctl">
+  <button id="bPlay" class="primary"><span id="playIcon">❚❚</span> Pause</button>
+
+  <label>Satellite size — <span class="val" id="vSize">1.8%</span></label>
+  <input type="range" id="size" min="0.6" max="6" step="0.1" value="1.8">
+
   <label>Relief exaggeration — <span class="val" id="vRelief">3.5%</span></label>
   <input type="range" id="relief" min="0" max="12" step="0.5" value="3.5">
 
   <label>Time rate — <span class="val" id="vRate">1× real time</span></label>
-  <input type="range" id="rate" min="0" max="8" step="1" value="1">
+  <input type="range" id="rate" min="0" max="7" step="1" value="0">
 
   <label>Satellites</label>
   <div class="row">
@@ -117,8 +143,8 @@
 </div>
 
 <div class="panel" id="hud">
-  <div><span class="k">UTC </span><span id="utc">—</span></div>
-  <div><span class="k">Tracking </span><span id="count">0</span><span class="k"> objects</span></div>
+  <div class="utcline"><span class="k">UTC </span><span id="utc">—</span></div>
+  <div class="utcline"><span class="k">Tracking </span><span id="count">0</span><span class="k"> objects</span></div>
   <div id="sel"><span class="k">Click a satellite for details.</span></div>
 </div>
 
@@ -146,6 +172,7 @@
     var dom = globe.model.colormap.domain;
     $('lmin').textContent = dom[0].toFixed(0) + ' m';
     $('lmax').textContent = '+' + dom[1].toFixed(0) + ' m';
+    globe.setSatelliteSize(parseFloat($('size').value) / 100);
     loadSample();
   }).catch(function (err) {
     $('loading').textContent = String(err.message || err);
@@ -195,12 +222,43 @@
     globe.setExaggeration(pct / 100);
   });
 
-  var RATES = [0, 1, 10, 60, 300, 1000, 3000, 10000, 30000];
+  // Time rate no longer carries a zero stop -- pausing belongs to the button,
+  // and having two controls that both stop the clock just confuses things.
+  var RATES = [1, 10, 60, 300, 1000, 3000, 10000, 30000];
   $('rate').addEventListener('input', function (e) {
     var r = RATES[parseInt(e.target.value, 10)];
     globe.setTimeScale(r);
-    $('vRate').textContent = r === 0 ? 'paused' : r === 1 ? '1× real time' : r + '×';
+    $('vRate').textContent = r === 1 ? '1× real time' : r + '×';
   });
+
+  $('size').addEventListener('input', function (e) {
+    var pct = parseFloat(e.target.value);
+    $('vSize').textContent = pct.toFixed(1) + '%';
+    globe.setSatelliteSize(pct / 100);
+  });
+
+  // ---- pause / play -----------------------------------------------------
+  // Pausing freezes the clock (so satellites stop) and suspends auto-spin,
+  // restoring whatever spin state you had when you resume.
+  var spinBeforePause = false;
+
+  function setPaused(paused) {
+    if (paused) {
+      spinBeforePause = globe.controls.autoRotate;
+      globe.setAutoRotate(false);
+      globe.pause();
+    } else {
+      globe.play();
+      globe.setAutoRotate(spinBeforePause);
+      $('bSpin').classList.toggle('on', spinBeforePause);
+    }
+    $('bPlay').classList.toggle('paused', paused);
+    $('playIcon').textContent = paused ? '▶' : '❚❚';
+    $('bPlay').lastChild.textContent = paused ? ' Play' : ' Pause';
+    drawSelection();   // the orbit is drawn differently in each state
+  }
+
+  $('bPlay').addEventListener('click', function () { setPaused(!globe.isPaused()); });
 
   $('bNow').addEventListener('click', function () { globe.setTime(new Date()); });
   $('bSpin').addEventListener('click', function () {
@@ -234,21 +292,58 @@
     tip.style.top = (e.clientY + 14) + 'px';
   });
 
-  globe.on('select', function (sat) {
-    if (!sat) {
-      Object.keys(globe._orbits).forEach(function (k) { globe.hideOrbit(k); });
+  // ---- selection --------------------------------------------------------
+  // Paused, a click gives you the orbit as it really is in space: the true
+  // path plus the ideal Kepler ellipse it would follow around a perfectly
+  // spherical Earth. Running, the ground track is the more useful curve.
+  var selected = null;
+
+  function drawSelection() {
+    globe.hideAllOrbits();
+    $('hud').classList.toggle('show', !!selected);
+    if (!selected) {
       $('sel').innerHTML = '<span class="k">Click a satellite for details.</span>';
       return;
     }
-    Object.keys(globe._orbits).forEach(function (k) { globe.hideOrbit(k); });
-    globe.showOrbit(sat.id, { opacity: 0.9 });
+    var sat = selected;
     var N = globe.geoidAt(sat.lat, sat.lon);
-    $('sel').innerHTML =
+    var html =
       '<div class="sat">' + sat.name + '</div>' +
       '<div><span class="k">NORAD </span>' + sat.id + '</div>' +
       '<div><span class="k">Sub-point </span>' + sat.lat.toFixed(2) + '°, ' + sat.lon.toFixed(2) + '°</div>' +
       '<div><span class="k">Altitude </span>' + sat.altKm.toFixed(1) + ' km</div>' +
       '<div><span class="k">Geoid below </span>' + (N >= 0 ? '+' : '') + N.toFixed(1) + ' m</div>';
+
+    if (globe.isPaused()) {
+      var orbit = globe.showOrbitEllipse(sat.id);
+      if (orbit) {
+        var u = orbit.userData;
+        html += '<div class="dev">' +
+          '<div><span class="swatch"></span><span class="k">actual path · </span>' +
+            u.periodMin.toFixed(1) + ' min</div>';
+        if (u.hasIdeal) {
+          html += '<div><span class="swatch dashed"></span><span class="k">ideal ellipse · e=</span>' +
+              u.eccentricity.toFixed(4) + '</div>' +
+            '<div><span class="k">Perigee/apogee </span>' + u.perigeeKm.toFixed(0) +
+              ' / ' + u.apogeeKm.toFixed(0) + ' km</div>';
+          if (u.deviationScale > 1) {
+            html += '<div><span class="swatch amber"></span><span class="k">distorted shape · ×</span>' +
+              Math.round(u.deviationScale) + '</div>';
+          }
+          html += '<div><span class="warn">Gravity offset ' + u.maxDeviationKm.toFixed(1) +
+              ' km</span></div>';
+        }
+        html += '</div>';
+      }
+    } else {
+      globe.showOrbit(sat.id, { opacity: 0.9 });
+    }
+    $('sel').innerHTML = html;
+  }
+
+  globe.on('select', function (sat) {
+    selected = sat;
+    drawSelection();
   });
 
   window.globe = globe; // handy in the console

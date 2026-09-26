@@ -127,17 +127,53 @@ globe.loadTLEText(text, {
 globe.addSatellite({ id, name, tle: [line1, line2], color });   // propagated
 globe.addSatellite({ id, name, lat, lon, altKm, color });       // static point
 
-globe.showOrbit(id, { minutes, steps, color });  // default: one full revolution
+globe.showOrbit(id, { minutes, steps, color });        // wavy ground track
+globe.showOrbitEllipse(id, { minutes, steps, ... });   // the orbit in space
 globe.hideOrbit(id);
+globe.hideAllOrbits();
 globe.removeSatellite(id);
 globe.clearSatellites();
 globe.getSatellite(id);      // { id, name, lat, lon, altKm, color, satrec }
 globe.satellites();
 ```
 
-Satellite positions are computed against the **undisplaced** sphere, so relief
-exaggeration never distorts an altitude. A satellite at 400 km sits at 400 km
-however lumpy you make the globe.
+Satellite positions are computed from the true Earth-fixed vector, so a dot
+always lands exactly on its own orbit curve, and relief exaggeration never
+distorts an altitude. A satellite at 400 km sits at 400 km however lumpy you
+make the globe.
+
+### Orbits in space, and the gravity distortion
+
+`showOrbitEllipse()` draws the orbit as a closed loop around the globe rather
+than as a ground track, by holding Earth's orientation fixed at the current
+instant. It returns a `THREE.Group` of up to three curves:
+
+| Curve | What it is |
+|---|---|
+| `orbit-actual` (solid) | where SGP4 really flies over one revolution |
+| `orbit-ideal` (dashed) | the two-body Kepler ellipse through the same position and velocity — the orbit a perfectly spherical Earth would give |
+| `orbit-deviation` (amber) | the actual path with its departure from the ideal ellipse magnified, so the distortion is visible at all |
+
+`group.userData` carries `periodMin`, `semiMajorKm`, `eccentricity`,
+`perigeeKm`, `apogeeKm`, `maxDeviationKm` and `deviationScale`.
+
+**Two honest caveats.** First, the real deviation is tiny — around 9 km on a
+1000 km LEO orbit, roughly 0.1% of the orbital radius — so at true scale the
+solid and dashed curves sit on top of each other. The amber curve exists because
+otherwise you would see nothing; `deviationScale` is the magnification applied,
+and it is reported in the UI so the amplified curve is never mistaken for the
+real one. Set `deviationTarget: 0` to suppress it.
+
+Second, and more important: that deviation is Earth's **low-order zonal
+gravity**, dominated by J2 oblateness, because that is what SGP4 models. It is
+*not* the full GGM02C field the globe is coloured with. A TLE does not carry
+enough information to reproduce fine geoid structure. So the amber curve shows
+the dominant way gravity bends the orbit, not the whole of it.
+
+Deviation is measured point-to-*segment* against the ideal polyline. Measuring
+to the nearest vertex instead would report half the sample spacing as
+"deviation" — about 276 km of pure discretisation noise on a GEO orbit, which
+would swamp the real 3 km effect.
 
 ### Querying the field
 
@@ -153,9 +189,10 @@ globe.surfaceRadius(lat, lon);   // displaced radius, for your own overlays
 ```js
 globe.pointOfView(lat, lon, zoom);   // zoom is a multiple of radius
 globe.setExaggeration(0.09);         // rebuilds mesh + draped overlays
+globe.setSatelliteSize(0.035);       // dot size; the pick radius follows it
 globe.setAutoRotate(true, 0.06);
 globe.setTime(new Date()); globe.setTimeScale(60);
-globe.play(); globe.pause();
+globe.play(); globe.pause(); globe.isPaused();
 globe.dispose();
 ```
 
