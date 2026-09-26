@@ -46,6 +46,9 @@
   button.on { border-color: var(--accent); background: rgba(103,200,255,.24); }
   input[type=file] { display: none; }
   .val { color: var(--accent); }
+  .key { display: flex; gap: 10px; font-size: 9.5px; color: var(--dim); margin-bottom: 6px; }
+  .key i { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+           margin-right: 4px; vertical-align: middle; }
 
   /* The pause control earns full width -- it's the one people reach for. */
   button.primary {
@@ -124,9 +127,15 @@
   <input type="range" id="relief" min="0" max="12" step="0.5" value="3.5">
 
   <label>Time rate — <span class="val" id="vRate">1× real time</span></label>
-  <input type="range" id="rate" min="0" max="7" step="1" value="0">
+  <input type="range" id="rate" min="0" max="12" step="1" value="1">
 
   <label>Satellites</label>
+  <div class="key">
+    <span><i style="background:#67c8ff"></i>LEO</span>
+    <span><i style="background:#f2d34a"></i>MEO</span>
+    <span><i style="background:#ff7b42"></i>GEO</span>
+    <span><i style="background:#c58cff"></i>HEO</span>
+  </div>
   <div class="row">
     <label class="filebtn" for="tlefile">Load your TLE file…</label>
     <input type="file" id="tlefile" accept=".tle,.txt">
@@ -153,14 +162,14 @@
 
 <script src="https://unpkg.com/three@0.157.0/build/three.min.js"></script>
 <script src="https://unpkg.com/satellite.js@5.0.0/dist/satellite.min.js"></script>
-<script src="dist/geoid-globe.js?v=2"></script>
+<script src="dist/geoid-globe.js?v=3"></script>
 <script>
 (function () {
   // GitHub Pages serves these with Cache-Control: max-age=600, so without a
   // cache-buster a returning visitor runs up to ten minutes of stale code
   // after a deploy. Bump V (and the ?v= on the script tag above) whenever
   // geoid-globe.js or anything under dist/ and data/ changes.
-  var V = '?v=2';
+  var V = '?v=3';
 
   var globe = GeoidGlobe.create({
     container: '#globe',
@@ -191,8 +200,11 @@
     globe.satellites().forEach(function (s) {
       if (!s.satrec) return;
       var periodMin = 2 * Math.PI / s.satrec.no;
-      s.color = periodMin > 1200 ? 0xff7b42      // GEO and beyond
-              : periodMin > 300  ? 0xf2d34a      // MEO
+      // Eccentricity is checked first: what makes a Molniya or a Chandra
+      // interesting is the shape of the orbit, not how long it takes.
+      s.color = s.satrec.ecco > 0.25 ? 0xc58cff  // HEO
+              : periodMin > 1200 ? 0xff7b42      // GEO and beyond
+              : periodMin > 128  ? 0xf2d34a      // MEO: 2000 km altitude up
               : 0x67c8ff;                        // LEO
     });
   }
@@ -231,7 +243,7 @@
 
   // Time rate no longer carries a zero stop -- pausing belongs to the button,
   // and having two controls that both stop the clock just confuses things.
-  var RATES = [1, 10, 60, 300, 1000, 3000, 10000, 30000];
+  var RATES = [0.5, 1, 50, 100, 200, 300, 500, 1000, 2000, 3000, 5000, 7000, 10000];
   $('rate').addEventListener('input', function (e) {
     var r = RATES[parseInt(e.target.value, 10)];
     globe.setTimeScale(r);

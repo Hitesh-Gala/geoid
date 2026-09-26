@@ -228,15 +228,29 @@ the surface and a lot far out, which is what reads as lurching. It also makes
 the gesture exactly reversible: pinch out and back and you land on the distance
 you started from, to the digit.
 
-`pinchGain` (default 0.5) sets how much of a pinch becomes zoom. It is
-deliberately below 1: a 1:1 "globe sticks to your fingers" mapping sounds
-right, but the usable distance range is only about 11× end to end, so one
-ordinary pinch would consume nearly all of it. At 0.5 a 3× finger spread zooms
-√3 ≈ 1.73×, leaving room to work.
+`pinchGain` (default 0.8) sets how much of a pinch becomes zoom. Still under 1
+so one gesture can't swallow the whole range, but high enough that reaching HEO
+apogee doesn't take a dozen pinches: a 3× finger spread zooms 3^0.8 ≈ 2.4×.
 
-Tunable at creation: `pinchGain`, `wheelStep` (default 0.1), `zoomEasing`
-(default 0.1 — slower than the 0.18 used for rotation, because a longer settle
-reads as smooth on zoom but as unresponsive on rotation).
+Tunable at creation: `pinchGain`, `wheelStep` (default 0.16, ≈15% per notch),
+`zoomEasing` (default 0.18, matching rotation — a slower settle sounds smoother
+but reads as sticky, since the camera keeps drifting after you've stopped) and
+`maxZoom` (default 65× globe radius).
+
+That ceiling is set by the catalogue, not by taste. TESS reaches 364,000 km at
+apogee — about 5,700 globe units — so anything less puts much of the HEO
+population permanently out of frame.
+
+### Orbit curve thickness
+
+Tube radius is in world units, so it shrinks with perspective. Sizing it off
+the globe meant that framing a Molniya apogee (camera ~950 units back) rendered
+the thinner curve at under half a pixel, and it vanished. Both tube radii and
+the distortion magnification are therefore scaled to **the orbit's own outer
+radius**, floored against the globe so a very low orbit still gets a visible
+tube. The distortion is always drawn at roughly 5.5% of the orbit's size,
+whatever the orbit — which is why `deviationScale` varies from about ×50 on a
+LEO to ×150 on a Molniya.
 
 Zoom is clamped above the tallest bump, so the camera can't end up inside the
 terrain when relief is exaggerated.
@@ -270,9 +284,27 @@ call regardless of count.
 python -m http.server 8095 --directory geoid-globe
 ```
 
-Then open <http://localhost:8095/>. It loads a 300-object sample catalogue and
+Then open <http://localhost:8095/>. It loads a 323-object sample catalogue and
 accepts your own `.tle` file through the file picker. Static files only — no
 build step, no bundler, no backend.
+
+## The sample catalogue
+
+`data/sample.tle` is a regime-balanced 323-object cut of CelesTrak's active
+catalogue rather than the first N entries, which are nearly all identical LEO
+calibration spheres. Picks are spread evenly through each class for variety:
+
+| Class | Count | Boundary |
+|---|---|---|
+| LEO | 200 | period < 128 min |
+| MEO | 40 | 128–1200 min |
+| GEO | 45 | 1200–1800 min |
+| HEO | 38 | eccentricity > 0.25 — every one in the catalogue |
+
+Eccentricity is tested before period, because what makes a Molniya or a Chandra
+interesting is the shape of the orbit rather than how long it takes. The HEO set
+includes MMS 1–4, THEMIS, Chandra, XMM-Newton, TESS, SMILE, PROBA-3 and the
+Molniya-type MERIDIAN and EKS series.
 
 ## Deploying
 

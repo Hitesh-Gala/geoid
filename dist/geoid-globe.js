@@ -142,15 +142,14 @@
     this.rotateSpeed = 0.45;
     this.zoomSpeed = 1.0;
     this.easing = 0.18;        // fraction of the outstanding move paid out per frame
-    // Zoom glides longer than rotation does: a slower settle reads as smooth
-    // here, whereas the same lag on rotation would just feel unresponsive.
-    this.zoomEasing = opts.zoomEasing != null ? opts.zoomEasing : 0.1;
-    // How much of a pinch translates into zoom. Deliberately below 1: a 1:1
-    // "globe sticks to your fingers" mapping sounds right, but the usable
-    // distance range is only about 11x end to end, so one ordinary pinch would
-    // consume nearly all of it and leave no fine control.
-    this.pinchGain = opts.pinchGain != null ? opts.pinchGain : 0.5;
-    this.wheelStep = opts.wheelStep != null ? opts.wheelStep : 0.1;
+    // Matched to the rotation easing. A slower settle sounds smoother but
+    // reads as sticky -- the camera keeps drifting after you have stopped.
+    this.zoomEasing = opts.zoomEasing != null ? opts.zoomEasing : 0.18;
+    // How much of a pinch translates into zoom. Still under 1 so a single
+    // gesture cannot swallow the whole range, but high enough that reaching
+    // HEO apogee does not take a dozen pinches.
+    this.pinchGain = opts.pinchGain != null ? opts.pinchGain : 0.8;
+    this.wheelStep = opts.wheelStep != null ? opts.wheelStep : 0.16;
     this.autoRotate = !!opts.autoRotate;
     this.autoRotateSpeed = opts.autoRotateSpeed || 0.06; // deg per frame
 
@@ -322,7 +321,8 @@
       scene.background = new THREE.Color(opts.background != null ? opts.background : 0x05070d);
     }
 
-    var camera = new THREE.PerspectiveCamera(45, 1, this.radius * 0.005, this.radius * 200);
+    var camera = new THREE.PerspectiveCamera(
+      45, 1, this.radius * 0.005, this.radius * Math.max(200, (opts.maxZoom || 65) * 4));
     this.camera = camera;
 
     var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: opts.background === null });
@@ -345,7 +345,9 @@
       phi: (90 - (opts.initialLat != null ? opts.initialLat : 15)) * DEG,
       distance: this.radius * (opts.initialZoom || 3.0),
       minDistance: this.radius * (1 + this.relief) * 1.06,
-      maxDistance: this.radius * 12,
+      // TESS reaches 364,000 km -- about 5,700 globe units -- so the old 12x
+      // ceiling put most of the HEO population permanently out of frame.
+      maxDistance: this.radius * (opts.maxZoom || 65),
       autoRotate: !!opts.autoRotate,
       autoRotateSpeed: opts.autoRotateSpeed,
       pinchGain: opts.pinchGain,
@@ -899,6 +901,18 @@
       maxDevKm = maxDevScene / K;
     }
 
+    // Everything below is sized against the orbit itself, not the globe. Tube
+    // thickness is in world units, so it shrinks with perspective: framing a
+    // Molniya apogee puts the camera ~950 units back, where a globe-sized tube
+    // is well under a pixel across and disappears entirely. Scaling with the
+    // orbit keeps both curves legible whether it's a 400 km LEO or TESS.
+    var scaleRef = 0;
+    for (var sr = 0; sr < actual.length; sr++) {
+      var L = actual[sr].length();
+      if (L > scaleRef) scaleRef = L;
+    }
+    if (!(scaleRef > 0)) scaleRef = this.radius;
+
     // The real distortion is a fraction of a percent of the orbit radius, so at
     // true scale the two curves land on top of each other and you see nothing.
     // Magnify the departure from the ideal ellipse until it's actually legible,
@@ -906,7 +920,8 @@
     // so nobody mistakes the amplified curve for the real one.
     var devScale = 1, exaggerated = null;
     if (ideal && maxDevScene > 1e-9) {
-      var target = this.radius * (options.deviationTarget || 0.035);
+      var target = scaleRef * (options.deviationTarget != null
+        ? options.deviationTarget : 0.055);
       devScale = Math.max(1, Math.min(options.maxDeviationScale || 4000, target / maxDevScene));
       if (devScale > 1.5) {
         exaggerated = [];
@@ -922,8 +937,11 @@
 
     // Green for the ideal, red for the real path, and the ideal drawn thicker
     // so the thin red curve reads clearly on top of it where the two coincide.
-    var idealR = (options.idealWidth != null ? options.idealWidth : 0.009) * this.radius;
-    var realR = (options.realWidth != null ? options.realWidth : 0.005) * this.radius;
+    // Floored against the globe so a very low orbit still gets a visible tube.
+    var idealR = Math.max(this.radius * 0.008,
+      (options.idealWidth != null ? options.idealWidth : 0.011) * scaleRef);
+    var realR = Math.max(this.radius * 0.0045,
+      (options.realWidth != null ? options.realWidth : 0.0062) * scaleRef);
 
     if (ideal) {
       var li = tubeFromPoints(THREE, ideal, {
