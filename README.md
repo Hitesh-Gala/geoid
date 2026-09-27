@@ -330,6 +330,22 @@ interesting is the shape of the orbit rather than how long it takes. The HEO set
 includes MMS 1–4, THEMIS, Chandra, XMM-Newton, TESS, SMILE, PROBA-3 and the
 Molniya-type MERIDIAN and EKS series.
 
+## Mirrored into NAZAR
+
+A copy of this page also lives in the NAZAR site (`Hitesh-Gala/sat-orbit-map`)
+as `geoid.html`, reachable from its home page. The two are plain file copies —
+nothing in git links them, so **a change here does not reach NAZAR until you
+re-copy it**:
+
+| This repo | NAZAR |
+|---|---|
+| `index.html` | `geoid.html` (re-apply its path/title/back-link/panel-offset edits) |
+| `dist/geoid-globe.js` | `geoid-globe.js` |
+| `dist/geoid-globe.json` | `data/geoid-globe.json` |
+| `data/sample.tle` | `data/geoid-sample.tle` |
+
+See that repo's `CLAUDE.md` for the exact list of deliberate differences.
+
 ## Deploying
 
 Push to `main`; GitHub Pages rebuilds in under a minute.
