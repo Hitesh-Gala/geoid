@@ -167,9 +167,12 @@ honours the width.
 **Two honest caveats.** First, the real deviation is tiny — around 9 km on a
 1000 km LEO orbit, roughly 0.1% of the orbital radius — so at true scale the
 solid and dashed curves sit on top of each other. The amber curve exists because
-otherwise you would see nothing; `deviationScale` is the magnification applied,
-and it is reported in the UI so the amplified curve is never mistaken for the
-real one. Set `deviationTarget: 0` to suppress it.
+otherwise you would see nothing. `deviationTarget` sets how far the red curve is
+pushed off the green, as a fraction of the orbit's own radius; `deviationScale`
+reports the magnification that came out of it, and the UI shows both that factor
+and the true kilometre figure so the amplified curve is never mistaken for the
+real one. The page drives this from the **Real orbit exaggeration** slider
+(0–20%); at 0 the red curve is drawn exactly where the satellite flies.
 
 Second, and more important: that deviation is Earth's **low-order zonal
 gravity**, dominated by J2 oblateness, because that is what SGP4 models. It is
@@ -197,6 +200,8 @@ globe.surfaceRadius(lat, lon);   // displaced radius, for your own overlays
 globe.pointOfView(lat, lon, zoom);   // zoom is a multiple of radius
 globe.setExaggeration(0.09);         // rebuilds mesh + draped overlays
 globe.setSatelliteSize(0.035);       // dot size; the pick radius follows it
+globe.setAltitudeScale(0.3);         // visually compress orbital altitude
+globe.setDeviationTarget(0.08);      // red-vs-green separation, 0 = truthful
 globe.setAutoRotate(true, 0.06);
 globe.setTime(new Date()); globe.setTimeScale(60);
 globe.play(); globe.pause(); globe.isPaused();
@@ -250,7 +255,11 @@ the distortion magnification are therefore scaled to **the orbit's own outer
 radius**, floored against the globe so a very low orbit still gets a visible
 tube. The distortion is always drawn at roughly 5.5% of the orbit's size,
 whatever the orbit — which is why `deviationScale` varies from about ×50 on a
-LEO to ×150 on a Molniya.
+LEO to ×150 on a Molniya at the same slider setting.
+
+Altitude scaling is applied to the curves and to their closest-point feet
+together, so the deviation stays proportional to the orbit as drawn, while
+`maxDeviationKm` keeps the true unscaled figure for the readout.
 
 Zoom is clamped above the tallest bump, so the camera can't end up inside the
 terrain when relief is exaggerated.
@@ -284,9 +293,24 @@ call regardless of count.
 python -m http.server 8095 --directory geoid-globe
 ```
 
-Then open <http://localhost:8095/>. It loads a 323-object sample catalogue and
-accepts your own `.tle` file through the file picker. Static files only — no
-build step, no bundler, no backend.
+Then open <http://localhost:8095/>. It loads the bundled 323-object sample
+catalogue. Static files only — no build step, no bundler, no backend.
+
+### Page controls
+
+| Control | Does |
+|---|---|
+| Pause / Play | freezes the clock and suspends auto-spin; restores your spin setting on resume |
+| Time rate | 0.5×, 1×, 50×, 100×, 200×, 300×, 500×, 1000×, 2000×, 3000×, 5000×, 7000×, 10000× |
+| Satellite size | dot size, with the click target following it |
+| Orbit altitude scale | 0.1×–4×. Scales only the radial excess above mean radius, so the surface never moves. At 0.1× GEO drops from 625 to 152 globe units and sits alongside LEO |
+| Relief exaggeration | geoid bump height, 0–12% of globe radius |
+| Real orbit exaggeration | 0–20%; see above |
+| Orbit classes | LEO / MEO / GEO / HEO filters, which double as the colour legend |
+| Display | coastlines, graticule, auto-spin, reset clock |
+
+Clicking a satellite while **paused** draws the orbit in space; while running it
+draws the ground track.
 
 ## The sample catalogue
 

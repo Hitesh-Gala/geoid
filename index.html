@@ -31,10 +31,11 @@
              margin: 0 0 6px; color: var(--accent); }
   #head p { margin: 0; font-size: 10.5px; line-height: 1.55; color: var(--dim); }
 
-  /* Anchored to the bottom but free to grow up to just under the header, so
-     the whole stack normally fits without scrolling. */
-  #ctl { bottom: 14px; left: 14px; width: 306px; padding: 9px 11px;
-         max-height: calc(100vh - 126px); overflow-y: auto; }
+  /* Anchored under the header rather than to the bottom of the window. Bottom
+     anchoring left ~320px of dead space above the panel on a 900px screen --
+     it grew upwards as controls were added, but still read as sitting low. */
+  #ctl { top: 152px; left: 14px; width: 306px; padding: 9px 11px;
+         max-height: calc(100vh - 166px); overflow-y: auto; }
   #ctl label { display: block; font-size: 11.5px; letter-spacing: .05em; color: var(--dim);
                margin: 7px 0 2px; text-transform: uppercase; }
   #ctl label:first-child { margin-top: 0; }
@@ -94,7 +95,9 @@
     #head { max-width: 46vw; padding: 9px 10px; }
     #head p { display: none; }
     #legend { width: 130px; padding: 9px 10px; }
-    #ctl { width: calc(100vw - 28px); max-height: 46vh; }
+    /* On a phone the header collapses and vertical room is scarce, so the
+       panel goes back to the bottom where a thumb can reach it. */
+    #ctl { top: auto; bottom: 14px; width: calc(100vw - 28px); max-height: 46vh; }
     /* The readout carries the orbit details now, so it can't just vanish on a
        phone -- it sits above the panel, and only when there's something in it. */
     #hud { display: none; left: 14px; right: 14px; width: auto;
@@ -167,14 +170,14 @@
 
 <script src="https://unpkg.com/three@0.157.0/build/three.min.js"></script>
 <script src="https://unpkg.com/satellite.js@5.0.0/dist/satellite.min.js"></script>
-<script src="dist/geoid-globe.js?v=4"></script>
+<script src="dist/geoid-globe.js?v=5"></script>
 <script>
 (function () {
   // GitHub Pages serves these with Cache-Control: max-age=600, so without a
   // cache-buster a returning visitor runs up to ten minutes of stale code
   // after a deploy. Bump V (and the ?v= on the script tag above) whenever
   // geoid-globe.js or anything under dist/ and data/ changes.
-  var V = '?v=4';
+  var V = '?v=5';
 
   var globe = GeoidGlobe.create({
     container: '#globe',
